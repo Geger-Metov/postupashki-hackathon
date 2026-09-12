@@ -1,11 +1,11 @@
-placement_id,campaign_id,channel_id,channel_name,creative_id,cost,publication_time,data_source
-pl_000,cmp_002,ch_007,channel_007,cr_000,34391.0,2026-08-17 17:16:07.123866715,synthetic
-pl_001,cmp_000,ch_004,channel_004,cr_004,32354.0,2026-09-03 10:36:44.325304189,synthetic
-pl_002,cmp_002,ch_006,channel_006,cr_002,20766.0,2026-08-24 12:28:16.647132220,synthetic
-pl_003,cmp_004,ch_002,channel_002,cr_000,35040.0,2026-08-27 08:55:04.751113416,synthetic
-pl_004,cmp_000,ch_008,channel_008,cr_003,29518.0,2026-09-08 21:58:47.444385627,synthetic
-pl_005,cmp_002,ch_003,channel_003,cr_004,28727.0,2026-08-11 04:50:21.021261169,synthetic
-pl_006,cmp_001,ch_007,channel_007,cr_002,22422.0,2026-08-09 17:00:32.648241536,synthetic
-pl_007,cmp_003,ch_000,channel_000,cr_003,37288.0,2026-09-08 19:08:55.112645682,synthetic
-pl_008,cmp_002,ch_007,channel_007,cr_001,36693.0,2026-08-21 08:57:56.017486502,synthetic
-pl_009,cmp_003,ch_003,channel_003,cr_000,21202.0,2026-08-21 14:25:33.508159065,synthetic
+placement_id,campaign_id,channel_id,channel_name,creative_id,cost,publication_time,expected_quality,data_source
+pl_00,cmp_2,ch_07,channel_07,cr_0,45000.0,2026-09-07 06:58:02.316351210,medium,synthetic
+pl_01,cmp_3,ch_03,channel_03,cr_3,45000.0,2026-08-12 09:47:16.745801574,weak,synthetic
+pl_02,cmp_0,ch_04,channel_04,cr_2,70000.0,2026-08-27 08:55:04.751113416,strong,synthetic
+pl_03,cmp_0,ch_08,channel_08,cr_3,25000.0,2026-09-06 01:05:29.600642801,medium,synthetic
+pl_04,cmp_3,ch_09,channel_09,cr_3,35000.0,2026-08-05 14:53:51.878468612,strong,synthetic
+pl_05,cmp_2,ch_04,channel_04,cr_0,70000.0,2026-09-08 19:08:55.112645682,medium,synthetic
+pl_06,cmp_2,ch_07,channel_07,cr_1,25000.0,2026-08-11 00:15:02.040720644,medium,synthetic
+pl_07,cmp_2,ch_04,channel_04,cr_0,35000.0,2026-08-28 18:47:41.378201049,medium,synthetic
+pl_08,cmp_4,ch_02,channel_02,cr_2,55000.0,2026-08-15 13:22:53.679170108,weak,synthetic
+pl_09,cmp_3,ch_07,channel_07,cr_4,70000.0,2026-08-14 16:02:07.282644204,weak,synthetic
