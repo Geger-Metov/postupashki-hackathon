@@ -218,6 +218,7 @@ def _prepare_orders(
 
 def _organic_rows(order: pd.Series, models: tuple[str, ...]) -> list[dict]:
     out = []
+
     for model in models:
         out.append({
             "order_id": order["order_id"],
@@ -231,9 +232,11 @@ def _organic_rows(order: pd.Series, models: tuple[str, ...]) -> list[dict]:
             "creative_id": None,
             "source_type": "organic",
             "touch_timestamp": pd.NaT,
-            "weight": 0.0,
-            "attributed_revenue": 0.0,
+            "window_days": None,
+            "weight": 1.0,
+            "attributed_revenue": float(order["total_amount"]),
         })
+
     return out
 
 
@@ -274,9 +277,11 @@ def _attribute_one_order(
                 "creative_id": t["creative_id"],
                 "source_type": t["source_type"],
                 "touch_timestamp": t["timestamp"],
+                "window_days": cfg.window_days,
                 "weight": float(w),
                 "attributed_revenue": float(order["total_amount"]) * float(w),
             })
+            
     return rows
 
 
@@ -356,18 +361,24 @@ def organic_share(results: pd.DataFrame) -> pd.Series:
 
 def reconciliation(results: pd.DataFrame) -> pd.DataFrame:
     """
-    Для каждой модели сумма attributed_revenue по заказу
-    должна равняться order_amount. Возвращает таблицу с diff.
-    Органические заказы исключены: у них по построению 0.
+    Проверка сохранения выручки.
+
+    Для каждого order_id и attribution model:
+        sum(attributed_revenue) == order_amount
+
+    Проверяются и paid touches, и organic orders.
     """
-    df = results[results["source_type"] != "organic"]
-    if df.empty:
-        return pd.DataFrame(columns=["attributed", "amount", "diff"])
-    grp = df.groupby(["model", "order_id"]).agg(
-        attributed=("attributed_revenue", "sum"),
-        amount=("order_amount", "first"),
+    grp = (
+        results
+        .groupby(["model", "order_id"], as_index=False)
+        .agg(
+            attributed=("attributed_revenue", "sum"),
+            amount=("order_amount", "first"),
+        )
     )
+
     grp["diff"] = (grp["attributed"] - grp["amount"]).abs()
+
     return grp
 
 
@@ -444,12 +455,17 @@ def main(argv: list[str] | None = None) -> None:
     recon = reconciliation(results)
     if not recon.empty:
         max_diff = float(recon["diff"].max())
-        log.info("reconciliation: max |attributed - amount| = %.6f", max_diff)
-        if max_diff > 1e-6:
-            msg = "Модели распределяют не всю сумму заказа"
-            if cfg.strict:
-                raise AssertionError(msg)
-            log.warning(msg)
+
+    log.info(
+        "reconciliation: max |attributed - amount| = %.6f",
+        max_diff,
+    )
+
+    if max_diff > 1e-6:
+        msg = "Модели распределяют не всю сумму заказа"
+        if cfg.strict:
+            raise AssertionError(msg)
+        log.warning(msg)
 
     log.info("\nBy model:\n%s", summary_by_model(results).to_string(index=False))
 

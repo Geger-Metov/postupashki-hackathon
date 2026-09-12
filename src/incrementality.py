@@ -76,6 +76,49 @@ def pre_post_analysis(
 # Backward-compatible alias for existing imports.
 its = pre_post_analysis
 
+def interrupted_time_series(
+    daily: pd.DataFrame,
+    event_date: str,
+) -> dict:
+
+    df = daily.copy()
+    ev = pd.Timestamp(event_date).normalize()
+    df = df.sort_values("date").reset_index(drop=True)
+
+    if ev not in set(df["date"]):
+        return {
+            "status": "event_date_not_found",
+            "event_date": event_date,
+            "method": "interrupted_time_series",
+        }
+
+    df["time"] = np.arange(len(df))
+    df["post"] = (df["date"] >= ev).astype(int)
+    event_index = int(df.index[df["date"] >= ev][0])
+    df["time_after"] = np.maximum(
+        df["time"] - event_index,
+        0,
+    )
+
+    # y = beta0 + beta1*time + beta2*post + beta3*time_after
+    X = np.column_stack([
+        np.ones(len(df)),
+        df["time"].to_numpy(),
+        df["post"].to_numpy(),
+        df["time_after"].to_numpy(),
+    ])
+
+    y = df["revenue"].to_numpy()
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+
+    return {
+        "status": "ok",
+        "event_date": event_date,
+        "method": "interrupted_time_series",
+        "level_change": float(beta[2]),
+        "slope_change": float(beta[3]),
+        "baseline_slope": float(beta[1]),
+    }
 
 def main() -> None:
     ap = argparse.ArgumentParser()
@@ -90,9 +133,12 @@ def main() -> None:
 
     daily = load_daily_revenue(path)
     res = pre_post_analysis(daily, args.date, args.window)
+    its_result = interrupted_time_series(daily, args.date)
 
     out = DATA / "its_results.csv"
     pd.DataFrame([res]).to_csv(out, index=False)
+    # не будет ли перезаписи? Может в другой файл?
+    pd.DataFrame([its_result]).to_csv(out, index=False)
 
     print(f"[incrementality] event={res['event_date']} status={res['status']}")
     if res["status"] == "ok":
@@ -101,6 +147,9 @@ def main() -> None:
         print(f"[incrementality] lift: {res['lift_pct']:,.2f}%")
         print("[incrementality] method: descriptive pre/post, not causal ITS")
     print(f"[incrementality] → {out}")
+
+    print("\nITS:")
+    print(its_result)
 
 
 if __name__ == "__main__":

@@ -1,72 +1,70 @@
-"""Tracking bot: ловит /start с параметром и логирует касание.
+"""Tracking bot: ловит /start с параметром и логирует касание + stitching.
 
 Запуск:
+    $env:BOT_TOKEN="123:ABC..."
     python -m src.tracking_bot
-Требует:
-    export BOT_TOKEN="123:ABC..."
+
 Пишет:
     data/touches_bot.csv
+    data/user_stitching.csv
 """
 from __future__ import annotations
 
 import asyncio
 import csv
 import os
-import re
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
+from src.tracking_utils import parse_start_param
+
 DATA = Path("data")
 DATA.mkdir(exist_ok=True)
 TOUCHES_FILE = DATA / "touches_bot.csv"
+STITCHING_FILE = DATA / "user_stitching.csv"
 
-START_PARAM_RE = re.compile(
-    r"^c_(?P<campaign>[^_]+)_p_(?P<placement>[^_]+)_cr_(?P<creative>.+)$"
-)
+
+def _append_csv(path: Path, header: list[str], row: list) -> None:
+    new_file = not path.exists()
+    with path.open("a", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        if new_file:
+            w.writerow(header)
+        w.writerow(row)
 
 
 def log_touch(user_id: int, start_param: str) -> None:
-    new_file = not TOUCHES_FILE.exists()
-    with TOUCHES_FILE.open("a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if new_file:
-            writer.writerow(["user_id", "start_param", "timestamp", "data_source"])
-        writer.writerow([
-            user_id,
-            start_param,
-            datetime.now(timezone.utc).isoformat(),
-            "collected",
-        ])
+    _append_csv(
+        TOUCHES_FILE,
+        ["user_id", "start_param", "timestamp", "data_source"],
+        [user_id, start_param, datetime.utcnow().isoformat(), "collected"],
+    )
 
 
-def parse_start_param(sp: str) -> dict[str, str | None]:
-    """Разобрать c_<campaign>_p_<placement>_cr_<creative>.
-
-    Идентификаторы считаются opaque strings: внутри ID нельзя использовать
-    дополнительный underscore. Формат валидируется целиком.
-    """
-    if not sp:
-        return {"campaign_id": None, "placement_id": None, "creative_id": None}
-
-    match = START_PARAM_RE.fullmatch(sp)
-    if not match:
-        return {"campaign_id": None, "placement_id": None, "creative_id": None}
-
-    return {
-        "campaign_id": match.group("campaign"),
-        "placement_id": match.group("placement"),
-        "creative_id": match.group("creative"),
-    }
+def log_stitching(user_id: int, start_param: str) -> None:
+    parsed = parse_start_param(start_param)
+    _append_csv(
+        STITCHING_FILE,
+        [
+            "telegram_user_id", "start_param", "campaign_id",
+            "placement_id", "creative_id", "first_seen",
+        ],
+        [
+            user_id, start_param,
+            parsed["campaign_id"], parsed["placement_id"], parsed["creative_id"],
+            datetime.utcnow().isoformat(),
+        ],
+    )
 
 
 async def main() -> None:
     token = os.getenv("BOT_TOKEN")
     if not token:
-        raise SystemExit("Set BOT_TOKEN env var")
+        raise SystemExit("Set BOT_TOKEN env var: $env:BOT_TOKEN='...'")
 
     bot = Bot(token=token)
     dp = Dispatcher()
@@ -78,16 +76,17 @@ async def main() -> None:
             sp = msg.text.split(" ", 1)[1].strip()
 
         log_touch(msg.from_user.id, sp)
-        parsed = parse_start_param(sp)
+        log_stitching(msg.from_user.id, sp)
 
+        parsed = parse_start_param(sp)
         await msg.answer(
-            "Привет! Записал касание.\n"
+            f"Привет! Записал касание.\n"
             f"campaign={parsed['campaign_id']}, "
             f"placement={parsed['placement_id']}, "
             f"creative={parsed['creative_id']}"
         )
 
-    print("[bot] polling...")
+    print("[bot] polling... (Ctrl+C to stop)")
     await dp.start_polling(bot)
 
 

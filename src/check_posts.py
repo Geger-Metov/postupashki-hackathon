@@ -1,6 +1,9 @@
 import pandas as pd
+from pathlib import Path
 
-df = pd.read_csv("posts_postypashki_old.csv")
+DATA = Path("data")
+
+df = pd.read_csv(DATA / "posts_postypashki_old.csv")
 
 print("Всего строк:", len(df))
 print("Уникальных post_id:", df["post_id"].nunique())

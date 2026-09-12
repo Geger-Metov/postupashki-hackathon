@@ -1,127 +1,187 @@
-# Поступашки — marketing attribution hackathon
+# Поступашки — Marketing Measurement System
 
-Проект для анализа продаж и построения measurement / attribution системы для маркетинговых активностей.
+## MVP
 
-Текущий статус
+Проект реализует воспроизводимый end-to-end pipeline:
 
-Репозиторий находится на этапе Stage 1.5 — стабилизация data contract.
-
-Canonical sales pipeline уже нормализован:
-
-data/base.xlsx
-      ↓
-src/normalize_sales.py
-      ↓
-┌───────────────────────┐
-│ orders.csv            │
-│ order_items.csv       │
-│ daily_metrics.csv     │
-└───────────────────────┘
-
-На текущем наборе данных:
-
-Метрика Значение
-Строк продаж 795
-Заказов 628
-Покупателей 606
-Курсов 18
-Пакетных заказов 153
-Повторных заказов 22
-Выручка 5 904 671,67 ₽
-
-Пакет и повторная покупка являются операционными определениями, а не утверждениями о бизнес-процессах, которых нет в исходном файле.
-
-Архитектура
-Sales layer
 base.xlsx
-   ↓
-normalize_sales.py
-   ├── order_items.csv
-   ├── orders.csv
-   └── daily_metrics.csv
-Marketing layer
-ad_registry.csv
-      ↓
-touches.csv
-      ↓
-user stitching
-      ↓
-attribution
-      ↓
+↓
+sales normalization
+↓
+marketing synthetic layer
+↓
+identity mapping
+↓
+multi-touch attribution
+↓
+attribution reconciliation
+↓
 ROMI
-Attribution ≠ incrementality
+↓
+forecast
+↓
+business recommendation
 
-Attribution отвечает, как распределить уже случившуюся выручку между касаниями.
+## Что реализовано
 
-Incrementality отвечает, какую дополнительную выручку действительно создала реклама.
+### 1. Sales layer
 
-Эти задачи разделены в архитектуре проекта.
+- orders
+- order_items
+- daily_metrics
+- EDA
+- anomaly detection
 
-Запуск
-Нормализация продаж
-python -m src.normalize_sales
-EDA
-python -m src.quick_eda
-Синтетический marketing layer
-python -m src.generate_synthetic
-Связка продаж и постов
-python -m src.join_sales_posts
-Exploratory pre/post analysis
-python -m src.incrementality --date 2026-08-08
-Тесты
-python -m pytest tests/ -v
-Stage 1.5 pipeline
+Определение заказа:
+(student_id, timestamp)
+
+На исходном датасете:
+
+- 795 sales rows
+- 628 orders
+- 606 buyers
+- 18 courses
+- 153 bundles
+- 22 repeat orders
+- 5 904 671.67 ₽ revenue
+
+### 2. Marketing layer
+
+Synthetic marketing data используется только для демонстрации
+measurement pipeline, потому что исторические рекламные costs
+и полные historical touches отсутствуют.
+
+Generated:
+
+- ad_registry
+- touches
+- campaigns
+- placements
+- creatives
+
+### 3. Identity stitching
+
+В production:
+
+Telegram user_id != student_id.
+
+В MVP используется явно маркированный
+synthetic_deterministic identity map.
+
+Production solution:
+tracking link / Telegram bot / CRM login
+→ identity_map
+→ student_id
+
+### 4. Attribution
+
+Implemented:
+
+- last touch
+- linear
+- time decay
+
+Attribution window:
+7 days.
+
+Для каждого заказа выполняется revenue reconciliation:
+
+sum(attributed_revenue) == order_amount
+
+### 5. ROMI
+
+ROMI:
+
+(attributed revenue - cost) / cost
+
+Важно:
+historical costs отсутствуют, поэтому ROMI на synthetic
+marketing layer является демонстрационным.
+
+Это attributed ROMI, а не incremental ROMI.
+
+### 6. Incrementality
+
+Исторический pre/post анализ используется только как exploratory analysis.
+
+Он НЕ интерпретируется как causal estimate.
+
+Для production measurement предлагаем:
+
+- holdout
+- DiD
+- interrupted time series
+- synthetic control
+
+### 7. Forecast
+
+Baseline models:
+
+- 7-day moving average
+- weekday mean
+
+Оценка:
+rolling-origin backtest.
+
+### 8. Real vs synthetic data
+
+REAL:
+
+- base.xlsx
+- normalized sales
+- public Telegram posts
+
+SYNTHETIC:
+
+- ad_registry
+- touches
+- costs
+- identity map
+
+Synthetic data нельзя интерпретировать как реальные
+исторические рекламные касания или реальные marketing costs.
+
+## Запуск
+
+Установка:
+
+pip install -r requirements.txt
+
+Полный pipeline:
+
 python -m src.pipeline
 
-Pipeline намеренно не объявляет attribution / ROMI готовыми шагами, пока соответствующие production-модули не реализованы.
+Тесты:
 
-Структура
-data/
-  base.xlsx
-  orders.csv
-  order_items.csv
-  daily_metrics.csv
-  ad_registry.csv
-  touches.csv
-  posts_*.csv
+python -m pytest tests/ -v
 
-docs/
-  definitions.md
-  assumptions.md
-  anomalies.md
-  data_model.md
-  causal_design.md
-  executive_summary.md
-  executive_summary_from_rashid.md
+Отдельные шаги:
 
-src/
-  normalize_sales.py
-  quick_eda.py
-  join_sales_posts.py
-  generate_synthetic.py
-  tracking_bot.py
-  incrementality.py
-  pipeline.py
-  ...
+python -m src.normalize_sales
+python -m src.build_identity_map
+python -m src.generate_synthetic
+python -m src.quick_eda
+python -m src.attribution
+python -m src.romi
+python -m src.forecast
 
-tests/
-  test_sales_normalization.py
-  test_synthetic.py
-  test_stage_1_5.py
-Важные ограничения
-История продаж начинается 04.08.2026.
-Исторические рекламные касания неполны.
-Реальные costs размещений отсутствуют.
-student_id и Telegram user_id — разные идентификаторы.
-Synthetic touches не следует интерпретировать как реальные исторические касания покупателей.
-Pre/post анализ не доказывает причинность.
-Следующий этап
+## Ограничения
 
-После стабилизации Stage 1.5:
+- sales history короткая;
+- historical marketing touches неполные;
+- historical ad costs отсутствуют;
+- Telegram user_id и student_id различаются;
+- synthetic layer используется для демонстрации;
+- attribution не является incrementality;
+- forecast является baseline из-за короткой истории.
 
-реализовать attribution engine;
-задать единый контракт touches → order;
-добавить synthetic end-to-end тестовый контур;
-проверить last-touch / linear / time-decay;
-затем считать ROMI;
-отдельно развивать incrementality / experimental design.
+## Следующий production step
+
+1. Единый event schema.
+2. Tracking links.
+3. Telegram bot events.
+4. Identity map.
+5. CRM/payment events.
+6. Реальные advertising costs.
+7. Holdout experiment.
+8. Incremental ROAS / ROMI.

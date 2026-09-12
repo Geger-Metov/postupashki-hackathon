@@ -1,52 +1,82 @@
-"""Единая точка запуска.
-
-    python -m src.pipeline
-    python -m src.pipeline --only synthetic romi
 """
+End-to-end MVP pipeline.
+
+Запуск:
+    python -m src.pipeline
+
+Отдельные шаги:
+    python -m src.pipeline --only normalize synthetic
+"""
+
 from __future__ import annotations
 
 import argparse
-import importlib
+import subprocess
 import sys
 
 
-STEPS: list[tuple[str, str, str]] = [
-    ("normalize", "src.normalize_sales", "main"),
-    ("synthetic", "src.generate_synthetic", "main"),
-    ("eda", "src.quick_eda", "main"),
+STEPS = [
+    ("normalize", ["-m", "src.normalize_sales"]),
+    ("identity_map", ["-m", "src.build_identity_map"]),
+    ("synthetic", ["-m", "src.generate_synthetic"]),
+    ("eda", ["-m", "src.quick_eda"]),
+    ("attribution", ["-m", "src.attribution"]),
+    ("romi", ["-m", "src.romi"]),
+    ("budget", ["-m", "src.budget_recommendation"]),
+    ("forecast", ["-m", "src.forecast"]),
 ]
 
 
-def run_step(name: str, module: str, func: str) -> None:
-    print(f"[pipeline] → {name}")
-    saved_argv = sys.argv.copy()
-    sys.argv = [sys.argv[0]]
-    try:
-        mod = importlib.import_module(module)
-        getattr(mod, func)()
-        print(f"[pipeline] ✓ {name}")
-    finally:
-        sys.argv = saved_argv
+def run_step(name: str, command: list[str]) -> None:
+    print(f"\n[pipeline] → {name}")
+
+    result = subprocess.run(
+        [sys.executable, *command],
+        check=False,
+    )
+
+    if result.returncode != 0:
+        raise SystemExit(
+            f"[pipeline] ✗ {name} failed "
+            f"(exit code {result.returncode})"
+        )
+
+    print(f"[pipeline] ✓ {name}")
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--only", nargs="*", default=None)
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser()
 
-    steps = STEPS
+    parser.add_argument(
+        "--only",
+        nargs="*",
+        default=None,
+        help="Например: --only normalize attribution romi",
+    )
+
+    args = parser.parse_args()
+
     if args.only:
-        wanted = set(args.only)
-        unknown = wanted - {name for name, _, _ in STEPS}
+        available = {name for name, _ in STEPS}
+        unknown = set(args.only) - available
+
         if unknown:
             raise SystemExit(
-                f"Неизвестные шаги: {', '.join(sorted(unknown))}. "
-                f"Доступны: {', '.join(name for name, _, _ in STEPS)}"
+                f"Неизвестные шаги: {', '.join(sorted(unknown))}\n"
+                f"Доступны: {', '.join(available)}"
             )
-        steps = [step for step in STEPS if step[0] in wanted]
 
-    for name, module, func in steps:
-        run_step(name, module, func)
+        selected = [
+            step for step in STEPS
+            if step[0] in set(args.only)
+        ]
+    else:
+        selected = STEPS
+
+    for name, command in selected:
+        run_step(name, command)
+
+    print("\n[pipeline] ✓ ALL STEPS COMPLETED")
 
 
 if __name__ == "__main__":
