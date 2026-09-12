@@ -1,93 +1,205 @@
-"""ROMI: (Attributed Revenue − Cost) / Cost.
+"""
+ROMI calculator.
 
-Запуск:
-    python -m src.romi
-Читает:  data/attribution_results.csv, data/ad_registry.csv
-Пишет:   data/romi_by_campaign.csv, data/romi_by_placement.csv
+Вход:
+    data/attribution_results.csv   (из src.attribution)
+    data/ad_registry.csv           (из src.generate_synthetic)
+
+Выход:
+    data/romi_by_placement.csv
+    data/romi_by_campaign.csv
+
+Формула:
+    ROMI_attr = (attributed_revenue - cost) / cost
+
+ASSUMPTION (критично):
+    cost из ad_registry — синтетический. В реальности его надо
+    собирать вручную (это часть measurement system на будущее).
+    ROMI_inc (incremental) здесь НЕ считается — см. docs/romi.md.
 """
 from __future__ import annotations
 
+import argparse
+import logging
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-DATA = Path("data")
+log = logging.getLogger("romi")
+
+DEFAULT_DATA_DIR = Path("data")
 
 
-def _agg_attr(attr: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
-    return (
-        attr.groupby(keys + ["model"], dropna=False)
+# --------------------------------------------------------------------------
+# ROMI
+# --------------------------------------------------------------------------
+
+def romi_by_placement(
+    attribution: pd.DataFrame,
+    ad_registry: pd.DataFrame,
+    model: str = "last_touch",
+) -> pd.DataFrame:
+    """
+    ROMI по каждому placement для выбранной модели атрибуции.
+    """
+    df = attribution[attribution["model"] == model].copy()
+
+    # стоимость показов: 1 placement = 1 строка в ad_registry
+    cost = (
+        ad_registry[["placement_id", "cost", "campaign_id", "channel_id",
+                     "publication_time"]]
+        .drop_duplicates("placement_id")
+    )
+
+    # приписанная выручка
+    rev = (
+        df[df["placement_id"].notna()]
+        .groupby("placement_id")
         .agg(
             attributed_revenue=("attributed_revenue", "sum"),
-            orders_count=("order_id", "nunique"),
+            orders=("order_id", "nunique"),
+            touches=("touch_id", "nunique"),
         )
         .reset_index()
     )
 
+    merged = cost.merge(rev, on="placement_id", how="left").fillna({
+        "attributed_revenue": 0.0,
+        "orders": 0,
+        "touches": 0,
+    })
 
-def _safe_romi(revenue: pd.Series, cost: pd.Series) -> pd.Series:
-    revenue = pd.to_numeric(revenue, errors="coerce").astype(float)
-    cost = pd.to_numeric(cost, errors="coerce").astype(float)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        romi = (revenue - cost) / cost
-    return romi.replace([np.inf, -np.inf], np.nan)
+    merged["model"] = model
+    merged["romi"] = np.where(
+        merged["cost"] > 0,
+        (merged["attributed_revenue"] - merged["cost"]) / merged["cost"],
+        np.nan,
+    )
+    # сколько раз окупилось (для наглядности)
+    merged["roas"] = np.where(
+        merged["cost"] > 0,
+        merged["attributed_revenue"] / merged["cost"],
+        np.nan,
+    )
+
+    return merged.sort_values("romi", ascending=False).reset_index(drop=True)
 
 
-def compute_romi(attr: pd.DataFrame, reg: pd.DataFrame, level: str) -> pd.DataFrame:
-    if level == "campaign":
-        agg = _agg_attr(attr, ["campaign_id"])
-        cost = reg.groupby("campaign_id", dropna=False)["cost"].sum().reset_index()
-        out = agg.merge(cost, on="campaign_id", how="left")
-        out["romi_attr"] = _safe_romi(out["attributed_revenue"], out["cost"])
-        out["romi_inc"] = np.nan
-        cols = ["campaign_id", "model", "attributed_revenue", "cost",
-                "romi_attr", "romi_inc", "orders_count"]
-        return out[cols].sort_values(["model", "attributed_revenue"],
-                                     ascending=[True, False])
-
-    if level == "placement":
-        agg = _agg_attr(attr, ["placement_id"])
-        meta = (
-            reg.groupby(["placement_id", "campaign_id", "channel_name"], dropna=False)
-            ["cost"].sum().reset_index()
+def romi_by_campaign(
+    romi_placement: pd.DataFrame,
+) -> pd.DataFrame:
+    """Агрегируем placement-level ROMI до кампании."""
+    grp = (
+        romi_placement.groupby(["model", "campaign_id"])
+        .agg(
+            cost=("cost", "sum"),
+            attributed_revenue=("attributed_revenue", "sum"),
+            placements=("placement_id", "nunique"),
+            orders=("orders", "sum"),
+            touches=("touches", "sum"),
         )
-        out = agg.merge(meta, on="placement_id", how="left")
-        out["romi_attr"] = _safe_romi(out["attributed_revenue"], out["cost"])
-        out["romi_inc"] = np.nan
-        cols = ["placement_id", "campaign_id", "channel_name", "model",
-                "attributed_revenue", "cost", "romi_attr", "romi_inc", "orders_count"]
-        return out[cols].sort_values(["model", "attributed_revenue"],
-                                     ascending=[True, False])
+        .reset_index()
+    )
+    grp["romi"] = np.where(
+        grp["cost"] > 0,
+        (grp["attributed_revenue"] - grp["cost"]) / grp["cost"],
+        np.nan,
+    )
+    grp["roas"] = np.where(
+        grp["cost"] > 0,
+        grp["attributed_revenue"] / grp["cost"],
+        np.nan,
+    )
+    return grp.sort_values("romi", ascending=False).reset_index(drop=True)
 
-    raise ValueError(f"Unknown level: {level}")
+
+def compare_models(
+    attribution: pd.DataFrame,
+    ad_registry: pd.DataFrame,
+) -> pd.DataFrame:
+    """ROMI по трём моделям — для сравнения (Задача 6)."""
+    frames = []
+    for model in attribution["model"].unique():
+        frames.append(romi_by_placement(attribution, ad_registry, model))
+    all_df = pd.concat(frames, ignore_index=True)
+    return all_df[["model", "placement_id", "cost",
+                   "attributed_revenue", "romi", "roas"]]
 
 
-def main() -> None:
-    attr_path = DATA / "attribution_results.csv"
-    reg_path = DATA / "ad_registry.csv"
+# --------------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------------
 
-    if not attr_path.exists():
-        raise FileNotFoundError(f"{attr_path} — нет. Ждём Разраба №1.")
-    if not reg_path.exists():
-        raise FileNotFoundError(f"{reg_path} — нет. Запусти generate_synthetic.")
+def _build_argparser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="ROMI calculator")
+    p.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
+    p.add_argument("--attribution", type=Path, default=None)
+    p.add_argument("--ad-registry", type=Path, default=None)
+    p.add_argument("--out-dir", type=Path, default=None)
+    return p
 
-    attr = pd.read_csv(attr_path)
-    reg = pd.read_csv(reg_path)
 
-    required = {"order_id", "campaign_id", "placement_id", "model", "attributed_revenue"}
-    missing = required - set(attr.columns)
-    if missing:
-        raise ValueError(f"attribution_results.csv — нет колонок: {missing}")
+def main(argv: list[str] | None = None) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    args = _build_argparser().parse_args(argv)
 
-    by_campaign = compute_romi(attr, reg, "campaign")
-    by_placement = compute_romi(attr, reg, "placement")
+    data_dir = args.data_dir
+    attribution_path = args.attribution or (data_dir / "attribution_results.csv")
+    ad_registry_path = args.ad_registry or (data_dir / "ad_registry.csv")
+    out_dir = args.out_dir or data_dir
 
-    by_campaign.to_csv(DATA / "romi_by_campaign.csv", index=False)
-    by_placement.to_csv(DATA / "romi_by_placement.csv", index=False)
+    attribution = pd.read_csv(attribution_path)
+    ad_registry = pd.read_csv(ad_registry_path)
 
-    print(f"[romi] campaigns: {len(by_campaign)} → data/romi_by_campaign.csv")
-    print(f"[romi] placements: {len(by_placement)} → data/romi_by_placement.csv")
+    log.info("attribution: %d rows", len(attribution))
+    log.info("ad_registry: %d placements, total cost = %.0f",
+             len(ad_registry), ad_registry["cost"].sum())
+
+    # --- placement-level, last_touch ---
+    romi_pl = romi_by_placement(attribution, ad_registry, "last_touch")
+    romi_pl.to_csv(out_dir / "romi_by_placement.csv", index=False)
+
+    # --- campaign-level ---
+    romi_cmp = romi_by_campaign(
+        pd.concat(
+            [romi_by_placement(attribution, ad_registry, m)
+             for m in attribution["model"].unique()],
+            ignore_index=True,
+        )
+    )
+    romi_cmp.to_csv(out_dir / "romi_by_campaign.csv", index=False)
+
+    # --- сравнение моделей ---
+    cmp_df = compare_models(attribution, ad_registry)
+    cmp_df.to_csv(out_dir / "romi_by_model.csv", index=False)
+
+    # --- вывод ---
+    log.info("\nTop-10 placements (last_touch):\n%s",
+             romi_pl.head(10)[["placement_id", "cost",
+                               "attributed_revenue", "romi", "roas"]]
+             .to_string(index=False))
+
+    log.info("\nBy campaign (last_touch):\n%s",
+             romi_cmp[romi_cmp["model"] == "last_touch"]
+             [["campaign_id", "cost", "attributed_revenue", "romi"]]
+             .to_string(index=False))
+
+    # --- сколько placements убыточны ---
+    last_touch = romi_pl
+    unprofitable = last_touch[last_touch["romi"] < 0]
+    log.info("\nunprofitable placements (last_touch): %d / %d",
+             len(unprofitable), len(last_touch))
+
+    # --- общий ROMI ---
+    total_cost = float(last_touch["cost"].sum())
+    total_rev = float(last_touch["attributed_revenue"].sum())
+    if total_cost > 0:
+        total_romi = (total_rev - total_cost) / total_cost
+        log.info("TOTAL ROMI (last_touch) = %.2f  (rev=%.0f, cost=%.0f)",
+                 total_romi, total_rev, total_cost)
+
+    log.info("\nWrote romi_by_placement.csv, romi_by_campaign.csv, romi_by_model.csv")
 
 
 if __name__ == "__main__":

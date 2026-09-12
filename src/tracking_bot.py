@@ -12,10 +12,11 @@ from __future__ import annotations
 import asyncio
 import csv
 import os
-from datetime import datetime
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
@@ -23,30 +24,43 @@ DATA = Path("data")
 DATA.mkdir(exist_ok=True)
 TOUCHES_FILE = DATA / "touches_bot.csv"
 
+START_PARAM_RE = re.compile(
+    r"^c_(?P<campaign>[^_]+)_p_(?P<placement>[^_]+)_cr_(?P<creative>.+)$"
+)
+
 
 def log_touch(user_id: int, start_param: str) -> None:
     new_file = not TOUCHES_FILE.exists()
     with TOUCHES_FILE.open("a", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
+        writer = csv.writer(f)
         if new_file:
-            w.writerow(["user_id", "start_param", "timestamp", "data_source"])
-        w.writerow([user_id, start_param, datetime.utcnow().isoformat(), "collected"])
+            writer.writerow(["user_id", "start_param", "timestamp", "data_source"])
+        writer.writerow([
+            user_id,
+            start_param,
+            datetime.now(timezone.utc).isoformat(),
+            "collected",
+        ])
 
 
-def parse_start_param(sp: str) -> dict:
-    """c_<cmp>_p_<pl>_cr_<cr> → dict."""
-    if not sp or not sp.startswith("c_"):
+def parse_start_param(sp: str) -> dict[str, str | None]:
+    """Разобрать c_<campaign>_p_<placement>_cr_<creative>.
+
+    Идентификаторы считаются opaque strings: внутри ID нельзя использовать
+    дополнительный underscore. Формат валидируется целиком.
+    """
+    if not sp:
         return {"campaign_id": None, "placement_id": None, "creative_id": None}
-    parts = sp.split("_")
-    out = {"campaign_id": None, "placement_id": None, "creative_id": None}
-    for i, p in enumerate(parts):
-        if p == "c" and i + 1 < len(parts):
-            out["campaign_id"] = parts[i + 1]
-        if p == "p" and i + 1 < len(parts):
-            out["placement_id"] = parts[i + 1]
-        if p == "cr" and i + 1 < len(parts):
-            out["creative_id"] = parts[i + 1]
-    return out
+
+    match = START_PARAM_RE.fullmatch(sp)
+    if not match:
+        return {"campaign_id": None, "placement_id": None, "creative_id": None}
+
+    return {
+        "campaign_id": match.group("campaign"),
+        "placement_id": match.group("placement"),
+        "creative_id": match.group("creative"),
+    }
 
 
 async def main() -> None:
@@ -62,10 +76,12 @@ async def main() -> None:
         sp = ""
         if msg.text and " " in msg.text:
             sp = msg.text.split(" ", 1)[1].strip()
+
         log_touch(msg.from_user.id, sp)
         parsed = parse_start_param(sp)
+
         await msg.answer(
-            f"Привет! Записал касание.\n"
+            "Привет! Записал касание.\n"
             f"campaign={parsed['campaign_id']}, "
             f"placement={parsed['placement_id']}, "
             f"creative={parsed['creative_id']}"

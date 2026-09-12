@@ -1,169 +1,160 @@
 # Data Model — Поступашки
 
-Единый источник правды. Все артефакты строго по этим колонкам.
+Единый контракт sales layer и attribution layer.
 
----
+## 1. Три уровня знания
 
-## Три уровня знания (главный принцип кейса)
+### 🟢 Знаем
 
-### 🟢 Знаем (факты из данных)
-- 795 строк продаж, 606 покупателей, 18 курсов, 04.08–10.09.2026
-- `student_id` — хеш от Telegram username
-- `timestamp` = момент покупки = момент выдачи доступа
-- Один `student_id` может иметь несколько покупок
-- Один `timestamp` + один `student_id` = один заказ (даже если курсов несколько)
+- 795 строк продаж.
+- 628 заказов.
+- 606 покупателей.
+- 18 курсов.
+- Период: 04.08–10.09.2026.
+- Один заказ определяется как уникальная пара `(student_id, timestamp)`.
+- Несколько курсов с одинаковыми `student_id` и `timestamp` образуют один заказ.
+- 153 заказа содержат два и более курса.
+- 22 заказа являются повторными относительно доступной истории.
+- Общая выручка: 5 904 671,67 ₽.
 
-### 🟡 Оцениваем (модели и допущения)
-- Attribution: last_touch / linear / time_decay, окно = 7 дней
-- ROMI_attr — по attribution-модели
-- ROMI_inc — через ITS (Task 7), не через attribution
-- Классификация постов: sale / discount / launch / native / content
-- Стоимость размещений — синтетическая (реальных данных нет)
+### 🟡 Оцениваем / моделируем
+
+- attribution: `last_touch`, `linear`, `time_decay`;
+- attribution window: 7 дней;
+- ROMI по attribution-модели;
+- exploratory pre/post analysis вокруг рекламных событий;
+- стоимость синтетических размещений.
 
 ### 🔴 Нельзя узнать из текущих данных
-- Реальные marketing costs по каждому размещению
-- Реальные касания до 4 августа
-- Внутренние переписки менеджеров
-- Атрибуция organики (пришли сами — не из рекламы)
-- Incrementality без эксперимента / holdout
 
-**Что нужно начать логировать:**
-- `start_param` в tracking link → `user_id`
-- `publication_time` + `cost` для каждого placement
-- `conversation_started` при первом сообщении менеджеру
-- Все sale / discount посты автоматически
+- реальные marketing costs по каждому placement;
+- полный исторический журнал рекламных касаний;
+- связь `student_id` с Telegram `user_id` без отдельной mapping-логики;
+- истинный incremental effect без эксперимента / holdout.
 
 ---
 
-## Сущности и владельцы
+## 2. Canonical sales layer
 
-| Файл | Владелец | Потребляет |
+### `data/order_items.csv`
+
+Одна строка = один курс внутри заказа.
+
+| Колонка | Тип | Описание |
 |---|---|---|
-| `data/orders.csv` | Разраб №1 | Разраб №2 (ROMI) |
-| `data/order_items.csv` | Разраб №1 | — |
-| `data/daily_metrics.csv` | Разраб №1 | Аналитики |
-| `data/ad_registry.csv` | **Разраб №2** | Разраб №1 |
-| `data/touches.csv` | **Разраб №2** | Разраб №1 (attribution) |
-| `data/attribution_results.csv` | Разраб №1 | **Разраб №2** |
-| `data/romi_by_campaign.csv` | **Разраб №2** | Аналитики |
-| `data/romi_by_placement.csv` | **Разраб №2** | Аналитики |
+| `order_id` | str | детерминированный ID заказа |
+| `item_index` | int | позиция курса внутри заказа |
+| `student_id` | str | обезличенный ID покупателя |
+| `timestamp` | datetime | время покупки |
+| `course` | str | курс |
+| `amount` | float | сумма строки |
+
+### `data/orders.csv`
+
+Одна строка = один заказ.
+
+| Колонка | Тип | Описание |
+|---|---|---|
+| `order_id` | str | PK |
+| `student_id` | str | покупатель |
+| `timestamp` | datetime | время заказа |
+| `total_amount` | float | сумма заказа |
+| `items_count` | int | число курсов |
+| `is_bundle` | bool | `items_count >= 2` |
+| `is_repeat` | bool | не первый доступный заказ покупателя |
+| `previous_order_id` | str/null | предыдущий заказ |
+| `days_since_previous_order` | float/null | дни с предыдущего заказа |
+
+### `data/daily_metrics.csv`
+
+Дневные агрегаты:
+
+`date, orders_count, unique_buyers, revenue, items_count, average_order_value, new_buyers, repeat_orders, bundle_orders`.
 
 ---
 
-## Схемы
+## 3. Marketing / attribution layer
 
-### ad_registry.csv
-| Колонка | Тип | Описание |
-|---|---|---|
-| placement_id | str | PK, `pl_XXX` |
-| campaign_id | str | FK, `cmp_X` |
-| channel_id | str | FK, `ch_XX` |
-| channel_name | str | Имя канала |
-| creative_id | str | FK, `cr_X` |
-| cost | float | ₽ |
-| publication_time | datetime | |
-| data_source | str | `synthetic` |
+### `data/ad_registry.csv`
 
-### touches.csv ⚠️ синк с Разрабом №1
-| Колонка | Тип | Описание |
-|---|---|---|
-| touch_id | str | PK, `t_XXXXXX` |
-| user_id | str | `u_XXXXX` |
-| touch_type | str | click \| bot_start \| lead |
-| campaign_id | str | FK |
-| placement_id | str | FK |
-| creative_id | str | FK |
-| timestamp | datetime | |
-| start_param | str | `c_<cmp>_p_<pl>_cr_<cr>` |
-| data_source | str | `synthetic` |
-
-### attribution_results.csv 🔴 от Разраба №1
 | Колонка | Тип |
 |---|---|
-| order_id | str |
-| user_id | str |
-| revenue | float |
-| campaign_id | str |
-| placement_id | str |
-| creative_id | str |
-| model | str (last_touch \| linear \| time_decay) |
-| attributed_revenue | float |
-| window_days | int |
+| `placement_id` | str |
+| `campaign_id` | str |
+| `channel_id` | str |
+| `channel_name` | str |
+| `creative_id` | str |
+| `cost` | float |
+| `publication_time` | datetime |
+| `data_source` | str |
 
-### romi_by_campaign.csv
-`campaign_id, model, attributed_revenue, cost, romi_attr, romi_inc, orders_count`
+Идентификаторы являются строковыми opaque IDs (`cmp_*`, `pl_*`, `cr_*`, `ch_*`).
 
-### romi_by_placement.csv
-`placement_id, campaign_id, channel_name, model, attributed_revenue, cost, romi_attr, romi_inc, orders_count`
+### `data/touches.csv`
 
----
+| Колонка | Тип |
+|---|---|
+| `touch_id` | str |
+| `user_id` | str |
+| `touch_type` | click / bot_start / lead |
+| `campaign_id` | str |
+| `placement_id` | str |
+| `creative_id` | str |
+| `timestamp` | datetime |
+| `start_param` | str |
+| `data_source` | str |
 
-## User Stitching (Task 4)
+### `data/attribution_results.csv`
 
-```
-Канал А → tracking link → Telegram user → менеджер → payment
-```
-
-**Механизм:**
-1. Пользователь кликает по ссылке `t.me/<bot>?start=c_<cmp>_p_<pl>_cr_<cr>`
-2. `tracking_bot.py` ловит `start_param` и пишет `(user_id, start_param, timestamp)`
-3. `user_id` = Telegram ID (анонимный числовой)
-4. При первом сообщении менеджеру — тоже логируется `conversation_started` с тем же `user_id`
-5. При оплате — `student_id` (хеш username) связывается с `user_id` через mapping-таблицу
-
-**Если deterministic stitching невозможен:**
-- Используем **probabilistic** по времени: если `bot_start` был в течение 24ч до оплаты и других касаний не было — считаем атрибуцию
-- Если несколько кандидатов — распределяем `linear`
-
-**Ограничения:**
-- Не используем персональные данные
-- `user_id` — числовой, `student_id` — хеш. Прямая связь запрещена политикой
-
----
-
-## ER-диаграмма
-
-```mermaid
-erDiagram
-    CAMPAIGN ||--o{ PLACEMENT : has
-    CHANNEL  ||--o{ PLACEMENT : hosts
-    CREATIVE ||--o{ PLACEMENT : used_in
-    PLACEMENT ||--o{ TOUCH : generates
-    USER ||--o{ TOUCH : makes
-    USER ||--o{ ORDER : places
-    ORDER ||--o{ ATTRIBUTION : attributed_by
-
-    CAMPAIGN { string campaign_id PK }
-    CHANNEL  { string channel_id PK }
-    CREATIVE { string creative_id PK }
-    PLACEMENT {
-        string placement_id PK
-        string campaign_id FK
-        string channel_id FK
-        string creative_id FK
-        float  cost
-        datetime publication_time
-    }
-    TOUCH {
-        string touch_id PK
-        string user_id FK
-        string placement_id FK
-        string touch_type
-        datetime timestamp
-    }
-    ORDER {
-        string order_id PK
-        string user_id FK
-        datetime timestamp
-        float amount
-    }
-```
+| Колонка | Тип |
+|---|---|
+| `order_id` | str |
+| `user_id` | str |
+| `revenue` | float |
+| `campaign_id` | str |
+| `placement_id` | str |
+| `creative_id` | str |
+| `model` | last_touch / linear / time_decay |
+| `attributed_revenue` | float |
+| `window_days` | int |
 
 ---
 
-## Правила
+## 4. Идентификаторы
 
-1. Схему не меняем без синка всех 4.
-2. `data_source` обязателен: `real` / `synthetic` / `collected`.
-3. Attribution window = 7 дней.
-4. Один заказ = `(student_id, timestamp)`. Пакет = несколько курсов с одним timestamp.
+Не смешиваем:
+
+- `student_id` — обезличенный идентификатор покупателя из sales layer;
+- Telegram `user_id` — идентификатор пользователя Telegram;
+- `order_id` — детерминированный ID заказа;
+- `campaign_id`, `placement_id`, `creative_id`, `channel_id` — строковые marketing IDs.
+
+Связь `student_id ↔ Telegram user_id` не предполагается автоматически. Она появляется только через отдельный stitching / mapping layer.
+
+---
+
+## 5. User stitching
+
+```text
+marketing placement
+       ↓
+tracking link
+       ↓
+Telegram user_id
+       ↓
+conversation / lead
+       ↓
+payment
+       ↓
+student_id
+
+Если deterministic mapping отсутствует, probabilistic attribution должна быть явно помечена как модельное допущение.
+
+6. ER-диаграмма
+7. Правила
+Canonical sales source: normalize_sales.py.
+Не создаём второй способ формирования order_id.
+Не удаляем полные дубли молча.
+data_source обязателен для marketing/event data.
+Attribution window = 7 дней как рабочее допущение.
+Attribution не равна incrementality.
