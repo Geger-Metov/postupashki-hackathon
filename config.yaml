@@ -1,0 +1,44 @@
+seed: 42
+
+date_range:
+  start: "2026-08-04"
+  end: "2026-09-10"
+
+courses:
+  - "ML старт"
+  - "ML про"
+  - "Алгоритмы старт"
+  - "Алгоритмы про"
+  - "AI агенты"
+  - "Аналитика старт"
+  - "Аналитика про"
+  - "Backend старт"
+  - "Backend про"
+  - "Data Science"
+  - "Data Engenering"
+  - "К ВУЗу"
+  - "Линейная алгебра"
+  - "Мат анализ"
+  - "Теория вероятностей"
+  - "Дискретка"
+  - "AB тестам"
+  - "Алгоритмы"
+
+synthetic:
+  n_channels: 10
+  n_campaigns: 5
+  n_creatives: 5
+  n_placements: 10
+  n_users: 2000
+  touches_per_user_mean: 2.0
+  conversion_rate: 0.20
+  lead_rate: 0.30
+  cost_min: 5000
+  cost_max: 40000
+
+attribution:
+  window_days: 7
+  models: ["last_touch", "linear", "time_decay"]
+
+romi:
+  include_inc: false
