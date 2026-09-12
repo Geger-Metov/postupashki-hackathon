@@ -136,9 +136,9 @@ def main() -> None:
     its_result = interrupted_time_series(daily, args.date)
 
     out = DATA / "its_results.csv"
-    pd.DataFrame([res]).to_csv(out, index=False)
+    pd.DataFrame([res]).to_csv(DATA / "pre_pos_results.csv", index=False)
     # не будет ли перезаписи? Может в другой файл?
-    pd.DataFrame([its_result]).to_csv(out, index=False)
+    pd.DataFrame([its_result]).to_csv(DATA / "its_results.csv", index=False)
 
     print(f"[incrementality] event={res['event_date']} status={res['status']}")
     if res["status"] == "ok":
